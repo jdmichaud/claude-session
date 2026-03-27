@@ -100,39 +100,39 @@ fn parse_session(path: &Path) -> SessionInfo {
         let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         // Prefer customTitle over slug
-        if msg_type == "custom-title" {
-            if let Some(t) = val.get("customTitle").and_then(|v| v.as_str()) {
-                title = Some(t.to_string());
-                has_custom_title = true;
-            }
+        if msg_type == "custom-title"
+            && let Some(t) = val.get("customTitle").and_then(|v| v.as_str())
+        {
+            title = Some(t.to_string());
+            has_custom_title = true;
         }
-        if !has_custom_title && title.is_none() {
-            if let Some(s) = val.get("slug").and_then(|v| v.as_str()) {
-                title = Some(s.to_string());
-            }
+        if !has_custom_title
+            && title.is_none()
+            && let Some(s) = val.get("slug").and_then(|v| v.as_str())
+        {
+            title = Some(s.to_string());
         }
 
         match msg_type {
             "user" => {
                 message_count += 1;
-                if timestamp.is_none() {
-                    if let Some(ts) = val.get("timestamp").and_then(|v| v.as_str()) {
-                        timestamp = ts.parse().ok();
-                    }
+                if timestamp.is_none()
+                    && let Some(ts) = val.get("timestamp").and_then(|v| v.as_str())
+                {
+                    timestamp = ts.parse().ok();
                 }
-                if first_message.is_none() {
-                    if let Some(content) = val
+                if first_message.is_none()
+                    && let Some(content) = val
                         .get("message")
                         .and_then(|m| m.get("content"))
                         .and_then(|c| c.as_str())
-                    {
-                        let truncated = if content.len() > 80 {
-                            format!("{}...", &content[..77])
-                        } else {
-                            content.to_string()
-                        };
-                        first_message = Some(truncated.replace('\n', " "));
-                    }
+                {
+                    let truncated = if content.len() > 80 {
+                        format!("{}...", &content[..77])
+                    } else {
+                        content.to_string()
+                    };
+                    first_message = Some(truncated.replace('\n', " "));
                 }
             }
             "assistant" => {
