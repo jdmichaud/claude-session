@@ -21,11 +21,27 @@ $ cs
     How would you approach...
 ```
 
+Pass a folder to see a tree of all Claude sessions found recursively under it:
+
+```
+$ cs ~/
+/home/user
+├── myproject (3 sessions)
+│   ├── db1e7abd 2026-03-27 06:16 (my-session) [44 msgs]
+│   ├── ea3b5d0b 2026-02-25 19:04 [1108 msgs]
+│   └── f9537a6e 2026-03-18 18:53 (refactor-auth) [740 msgs]
+└── other-project (1 session)
+    └── 0c8a9a1b 2026-03-30 11:04 [57 msgs]
+
+4 sessions across 2 projects
+```
+
 ### Commands
 
 ```
-cs                      # list sessions (default)
-cs list                 # same as above
+cs                      # list sessions for the current directory
+cs <folder>             # tree of sessions under <folder>
+cs list                 # explicit list (same as bare cs)
 cs show <id>            # print conversation to stdout
 cs delete <id>          # delete a session
 ```

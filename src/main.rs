@@ -4,6 +4,7 @@ use colored::Colorize;
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -12,6 +13,9 @@ struct Cli {
     /// Project directory (defaults to current directory)
     #[arg(short, long)]
     dir: Option<PathBuf>,
+
+    /// Folder to scan for sessions (shows tree view when given without a subcommand)
+    folder: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -40,6 +44,12 @@ struct SessionInfo {
     timestamp: Option<DateTime<Utc>>,
     first_message: Option<String>,
     message_count: usize,
+}
+
+struct DirNode {
+    name: String,
+    sessions: Vec<SessionInfo>,
+    children: BTreeMap<String, DirNode>,
 }
 
 fn claude_projects_dir() -> PathBuf {
@@ -331,14 +341,276 @@ fn delete_session(info: &SessionInfo) {
     println!("Deleted session {}", info.uuid);
 }
 
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "vendor",
+    "__pycache__",
+    "build",
+    "dist",
+    "venv",
+    ".venv",
+];
+
+fn known_project_keys() -> HashSet<String> {
+    let projects_dir = claude_projects_dir();
+    let mut keys = HashSet::new();
+    if let Ok(entries) = fs::read_dir(&projects_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.path().is_dir() {
+                keys.insert(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    keys
+}
+
+fn walk_and_collect(
+    dir: &Path,
+    known_keys: &HashSet<String>,
+    results: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+    depth: usize,
+) {
+    const MAX_DEPTH: usize = 10;
+    if depth > MAX_DEPTH {
+        return;
+    }
+
+    let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        return;
+    }
+
+    let key = project_key(&canonical);
+    if known_keys.contains(&key) {
+        results.push(canonical.clone());
+    }
+
+    let Ok(entries) = fs::read_dir(&canonical) else {
+        return;
+    };
+    let mut dirs: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    dirs.sort_by_key(|e| e.file_name());
+
+    for entry in dirs {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || SKIP_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+        walk_and_collect(&entry.path(), known_keys, results, visited, depth + 1);
+    }
+}
+
+fn build_dir_tree(
+    root_name: &str,
+    base: &Path,
+    entries: Vec<(PathBuf, Vec<SessionInfo>)>,
+) -> DirNode {
+    let mut root = DirNode {
+        name: root_name.to_string(),
+        sessions: Vec::new(),
+        children: BTreeMap::new(),
+    };
+
+    for (path, sessions) in entries {
+        let rel = path.strip_prefix(base).unwrap_or(&path);
+        let components: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+
+        if components.is_empty() {
+            root.sessions = sessions;
+            continue;
+        }
+
+        let mut node = &mut root;
+        for comp in &components {
+            node = node
+                .children
+                .entry(comp.clone())
+                .or_insert_with(|| DirNode {
+                    name: comp.clone(),
+                    sessions: Vec::new(),
+                    children: BTreeMap::new(),
+                });
+        }
+        node.sessions = sessions;
+    }
+
+    root
+}
+
+fn render_tree(node: &DirNode, prefix: &str, is_last: bool, is_root: bool) {
+    let session_str = if !node.sessions.is_empty() {
+        let n = node.sessions.len();
+        format!(" ({n} session{})", if n == 1 { "" } else { "s" })
+    } else {
+        String::new()
+    };
+
+    if is_root {
+        println!("{}{}", node.name.bold(), session_str.dimmed());
+    } else {
+        let conn = if is_last { "└── " } else { "├── " };
+        println!(
+            "{prefix}{conn}{}{}",
+            node.name.bold(),
+            session_str.dimmed()
+        );
+    }
+
+    let child_prefix = if is_root {
+        String::new()
+    } else if is_last {
+        format!("{prefix}    ")
+    } else {
+        format!("{prefix}│   ")
+    };
+
+    let total = node.sessions.len() + node.children.len();
+    let mut idx = 0;
+
+    for s in &node.sessions {
+        idx += 1;
+        let conn = if idx == total { "└── " } else { "├── " };
+
+        let ts = s
+            .timestamp
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "?".into());
+
+        let title = s
+            .title
+            .as_deref()
+            .map(|t| format!(" ({})", t.cyan()))
+            .unwrap_or_default();
+
+        println!(
+            "{child_prefix}{conn}{} {}{} [{} msgs]",
+            &s.uuid[..8].yellow(),
+            ts.dimmed(),
+            title,
+            s.message_count,
+        );
+    }
+
+    let children: Vec<&DirNode> = node.children.values().collect();
+    for child in &children {
+        idx += 1;
+        render_tree(child, &child_prefix, idx == total, false);
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
-    let dir = cli.dir.unwrap_or_else(|| std::env::current_dir().unwrap());
 
-    let command = cli.command.unwrap_or(Commands::List);
+    match cli.command {
+        None => {
+            if let Some(folder) = cli.folder {
+                // Tree mode: scan folder recursively for sessions
+                let keys = known_project_keys();
+                if keys.is_empty() {
+                    println!("No Claude sessions found");
+                    return;
+                }
 
-    match command {
-        Commands::List => {
+                let canonical =
+                    fs::canonicalize(&folder).unwrap_or_else(|_| folder.clone());
+                let mut matching_dirs = Vec::new();
+                let mut visited = HashSet::new();
+                walk_and_collect(&canonical, &keys, &mut matching_dirs, &mut visited, 0);
+
+                if matching_dirs.is_empty() {
+                    println!("No Claude sessions found under {}", canonical.display());
+                    return;
+                }
+
+                let mut entries: Vec<(PathBuf, Vec<SessionInfo>)> = Vec::new();
+                for project_dir in matching_dirs {
+                    let files = list_session_files(&project_dir);
+                    if !files.is_empty() {
+                        let mut sessions: Vec<SessionInfo> =
+                            files.iter().map(|f| parse_session(f)).collect();
+                        sessions.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                        entries.push((project_dir, sessions));
+                    }
+                }
+
+                if entries.is_empty() {
+                    println!("No Claude sessions found under {}", canonical.display());
+                    return;
+                }
+
+                let total_sessions: usize = entries.iter().map(|(_, s)| s.len()).sum();
+                let total_projects = entries.len();
+
+                let root_name = canonical.display().to_string();
+                let tree = build_dir_tree(&root_name, &canonical, entries);
+                println!();
+                render_tree(&tree, "", true, true);
+                println!(
+                    "\n{} session{} across {} project{}",
+                    total_sessions,
+                    if total_sessions == 1 { "" } else { "s" },
+                    total_projects,
+                    if total_projects == 1 { "" } else { "s" },
+                );
+            } else {
+                // List mode: show sessions for current project
+                let dir = cli.dir.unwrap_or_else(|| std::env::current_dir().unwrap());
+                let files = list_session_files(&dir);
+                if files.is_empty() {
+                    println!("No Claude sessions found for {}", dir.display());
+                    return;
+                }
+
+                let mut sessions: Vec<SessionInfo> =
+                    files.iter().map(|f| parse_session(f)).collect();
+                sessions.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+                println!(
+                    "{} session(s) for {}\n",
+                    sessions.len(),
+                    dir.display().to_string().dimmed()
+                );
+
+                for s in &sessions {
+                    let ts = s
+                        .timestamp
+                        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_else(|| "?".into());
+
+                    let title = s
+                        .title
+                        .as_deref()
+                        .map(|t| format!(" ({})", t.cyan()))
+                        .unwrap_or_default();
+
+                    let msg = s.first_message.as_deref().unwrap_or("");
+
+                    println!(
+                        "  {} {}{} [{} msgs]",
+                        &s.uuid[..8].yellow(),
+                        ts.dimmed(),
+                        title,
+                        s.message_count
+                    );
+                    if !msg.is_empty() {
+                        println!("    {}", msg.dimmed());
+                    }
+                }
+            }
+        }
+        Some(Commands::List) => {
+            let dir = cli
+                .folder
+                .or(cli.dir)
+                .unwrap_or_else(|| std::env::current_dir().unwrap());
             let files = list_session_files(&dir);
             if files.is_empty() {
                 println!("No Claude sessions found for {}", dir.display());
@@ -381,7 +653,11 @@ fn main() {
                 }
             }
         }
-        Commands::Delete { session } => {
+        Some(Commands::Delete { session }) => {
+            let dir = cli
+                .folder
+                .or(cli.dir)
+                .unwrap_or_else(|| std::env::current_dir().unwrap());
             let files = list_session_files(&dir);
             let sessions: Vec<SessionInfo> = files.iter().map(|f| parse_session(f)).collect();
             match resolve_session(&sessions, &session) {
@@ -389,7 +665,11 @@ fn main() {
                 None => eprintln!("No session matching '{}' found", session),
             }
         }
-        Commands::Show { session } => {
+        Some(Commands::Show { session }) => {
+            let dir = cli
+                .folder
+                .or(cli.dir)
+                .unwrap_or_else(|| std::env::current_dir().unwrap());
             let files = list_session_files(&dir);
             let sessions: Vec<SessionInfo> = files.iter().map(|f| parse_session(f)).collect();
             match resolve_session(&sessions, &session) {
