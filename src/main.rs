@@ -492,7 +492,7 @@ fn render_tree(node: &DirNode, prefix: &str, is_last: bool, is_root: bool) {
 
         println!(
             "{child_prefix}{conn}{} {}{} [{} msgs]",
-            &s.uuid[..8].yellow(),
+            s.uuid.yellow(),
             ts.dimmed(),
             title,
             s.message_count,
@@ -595,7 +595,7 @@ fn main() {
 
                     println!(
                         "  {} {}{} [{} msgs]",
-                        &s.uuid[..8].yellow(),
+                        s.uuid.yellow(),
                         ts.dimmed(),
                         title,
                         s.message_count
@@ -643,7 +643,7 @@ fn main() {
 
                 println!(
                     "  {} {}{} [{} msgs]",
-                    &s.uuid[..8].yellow(),
+                    s.uuid.yellow(),
                     ts.dimmed(),
                     title,
                     s.message_count

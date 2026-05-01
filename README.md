@@ -13,13 +13,16 @@ Run `cs` from any directory where you've used Claude Code:
 $ cs
 3 session(s) for /home/user/myproject
 
-  db1e7abd 2026-03-27 06:16 (my-session) [44 msgs]
+  db1e7abd-2f4a-4c1e-9b3d-8a5e7f2c1a0b 2026-03-27 06:16 (my-session) [44 msgs]
     write a tool in rust that...
-  ea3b5d0b 2026-02-25 19:04 [1108 msgs]
+  ea3b5d0b-1c8d-4e2a-b6f9-3d7c5a8e1b04 2026-02-25 19:04 [1108 msgs]
     Analyze the file main.c and try to identify...
-  f9537a6e 2026-03-18 18:53 (refactor-auth) [740 msgs]
+  f9537a6e-9b2c-4a8d-8e1f-2b6c4a9d5e07 2026-03-18 18:53 (refactor-auth) [740 msgs]
     How would you approach...
 ```
+
+The full UUID is shown so it can be passed directly to `claude --resume`,
+which does not accept prefixes.
 
 Pass a folder to see a tree of all Claude sessions found recursively under it:
 
@@ -27,11 +30,11 @@ Pass a folder to see a tree of all Claude sessions found recursively under it:
 $ cs ~/
 /home/user
 ├── myproject (3 sessions)
-│   ├── db1e7abd 2026-03-27 06:16 (my-session) [44 msgs]
-│   ├── ea3b5d0b 2026-02-25 19:04 [1108 msgs]
-│   └── f9537a6e 2026-03-18 18:53 (refactor-auth) [740 msgs]
+│   ├── db1e7abd-2f4a-4c1e-9b3d-8a5e7f2c1a0b 2026-03-27 06:16 (my-session) [44 msgs]
+│   ├── ea3b5d0b-1c8d-4e2a-b6f9-3d7c5a8e1b04 2026-02-25 19:04 [1108 msgs]
+│   └── f9537a6e-9b2c-4a8d-8e1f-2b6c4a9d5e07 2026-03-18 18:53 (refactor-auth) [740 msgs]
 └── other-project (1 session)
-    └── 0c8a9a1b 2026-03-30 11:04 [57 msgs]
+    └── 0c8a9a1b-7d3e-4f6a-9c2b-5e8d1a4f6c09 2026-03-30 11:04 [57 msgs]
 
 4 sessions across 2 projects
 ```
